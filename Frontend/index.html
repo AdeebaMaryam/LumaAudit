@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mini Inventory — Frontend</title>
+  <style>
+    :root{--bg:#f7f8fb;--card:#fff;--muted:#666;--primary:#2563eb;--danger:#ef4444}
+    body{font-family:Inter,system-ui,Arial; background:var(--bg); margin:18px;color:#111}
+    .wrap{max-width:1100px;margin:0 auto}
+    header{display:flex;align-items:center;justify-content:space-between}
+    h1{margin:0 0 6px}
+    .card{background:var(--card);padding:14px;border-radius:10px;box-shadow:0 6px 18px rgba(10,10,20,0.06);margin-bottom:14px}
+    .controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap}
+    label{font-size:0.86rem;color:var(--muted)}
+    input[type="number"], input[type="file"], select{padding:6px 8px;border-radius:6px;border:1px solid #e6e9ef}
+    button{padding:8px 10px;border-radius:8px;border:1px solid #cdd6ea;background:#fff;cursor:pointer}
+    .primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+    table{width:100%;border-collapse:collapse;margin-top:8px}
+    th,td{padding:8px 6px;border-bottom:1px solid #f0f2f6;text-align:left}
+    th{font-size:0.9rem;color:var(--muted)}
+    .small{font-size:0.9rem;color:var(--muted)}
+    #log{height:140px;overflow:auto;background:#071226;color:#cfe9ff;padding:10px;border-radius:8px;font-family:monospace;font-size:12px}
+    .badge{padding:4px 8px;border-radius:999px;font-weight:600;font-size:0.85rem}
+    .ok{background:#ecfeeb;color:#006400}
+    .warn{background:#fff7ed;color:#7b4100}
+    .red{background:#fff0f0;color:#8b0000}
+    .flex{display:flex;gap:12px;align-items:center}
+    .spacer{flex:1}
+    .muted{color:var(--muted)}
+    img.prod{width:40px;height:40px;border-radius:6px;object-fit:cover}
+
+    /* modal */
+    .modal-backdrop{position:fixed;inset:0;background:rgba(3,5,15,0.45);display:none;align-items:center;justify-content:center}
+    .modal{background:#fff;padding:16px;border-radius:10px;max-width:720px;width:95%;box-shadow:0 10px 30px rgba(10,10,20,0.2)}
+    .modal pre{background:#071226;color:#cfe9ff;padding:10px;border-radius:6px;overflow:auto}
+
+    @media (max-width:720px){.controls{flex-direction:column;align-items:stretch}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Mini Inventory — Frontend</h1>
+        <div class="small muted">Simple UI for your FastAPI backend + local blockchain</div>
+      </div>
+      <div class="small muted">Backend: <span id="apiUrlDisplay">http://127.0.0.1:8000</span></div>
+    </header>
+
+    <div class="card">
+      <div class="controls">
+        <div>
+          <label class="small">Upload sales CSV</label><br>
+          <input id="salesFile" type="file" accept=".csv" />
+          <button id="uploadBtn" class="primary">Upload</button>
+        </div>
+
+        <div>
+          <label class="small">Upload predictions CSV (optional)</label><br>
+          <input id="predFile" type="file" accept=".csv" />
+          <button id="uploadPredBtn">Upload</button>
+        </div>
+
+        <div>
+          <label class="small">Lead time (days)</label><br>
+          <input id="leadTime" type="number" value="7" style="width:90px" />
+        </div>
+
+        <div>
+          <label class="small">Window (days)</label><br>
+          <input id="window" type="number" value="7" style="width:90px" />
+        </div>
+
+        <div>
+          <label class="small">Actions</label><br>
+          <button id="calcBtn">Calculate Stock</button>
+          <button id="priorityBtn">Get Restock Priority</button>
+        </div>
+
+        <div class="spacer"></div>
+
+        <div style="text-align:right">
+          <div class="small muted">Serve this folder then open in browser</div>
+          <div class="small muted">Run: <code>python -m http.server 5500</code></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="stockCard" class="card" style="display:none">
+      <h3>Recommended Stock</h3>
+      <table id="stockTable">
+        <thead><tr><th></th><th>Product</th><th>Last avg/day</th><th>Recommended qty</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div id="priorityCard" class="card" style="display:none">
+      <h3>Restock Priority</h3>
+      <table id="priorityTable">
+        <thead><tr><th></th><th>Product</th><th>Recommended</th><th>Current</th><th>Need</th><th>Score</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Blockchain / Actions Log</h3>
+      <div id="log">Logs will appear here</div>
+    </div>
+
+    <div class="card small muted">
+      <strong>Notes:</strong> Make sure your FastAPI backend is running on the API URL above and CORS is enabled (see backend snippet in the README). Use Ganache and Remix for smart contract; receipts shown in log are tx hashes. Click a tx row to view details.
+    </div>
+  </div>
+
+  <!-- modal for tx details -->
+  <div id="modalBackdrop" class="modal-backdrop">
+    <div class="modal">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong>Transaction Details</strong>
+        <button id="closeModal">Close</button>
+      </div>
+      <pre id="modalContent">{}</pre>
+    </div>
+  </div>
+
+<script>
+// ============== CONFIG ==============
+const API = "http://127.0.0.1:8000"; // change here if your backend is at another host/port
+// show in header
+document.getElementById('apiUrlDisplay').innerText = API;
+
+// small helper for logs
+const logEl = document.getElementById('log');
+function log(msg, data){
+  const ts = new Date().toLocaleTimeString();
+  const line = ts + ' ▶ ' + msg + (data?(' ' + JSON.stringify(data)): '');
+  const node = document.createElement('div');
+  node.style.cursor = 'pointer';
+  node.innerText = line;
+  // if data looks like tx receipt, clicking shows modal
+  node.onclick = ()=>{ if(data) showModal(data); }
+  logEl.prepend(node);
+}
+
+function showModal(data){
+  document.getElementById('modalContent').innerText = JSON.stringify(data, null, 2);
+  document.getElementById('modalBackdrop').style.display = 'flex';
+}
+document.getElementById('closeModal').onclick = ()=>{ document.getElementById('modalBackdrop').style.display='none'; }
+
+// ===== upload sales CSV =====
+document.getElementById('uploadBtn').onclick = async ()=>{
+  const f = document.getElementById('salesFile').files[0];
+  if(!f) return alert('Choose sales CSV first');
+  const fd = new FormData(); fd.append('file', f);
+  try{
+    const res = await fetch(API + '/ingest_sales', { method: 'POST', body: fd });
+    const j = await res.json();
+    alert('Upload result: ' + JSON.stringify(j));
+    log('Uploaded sales CSV', j);
+  }catch(e){ alert('Upload failed: '+e.message); log('Upload failed: '+e.message); }
+}
+
+// ===== upload predictions CSV =====
+document.getElementById('uploadPredBtn').onclick = async ()=>{
+  const f = document.getElementById('predFile').files[0];
+  if(!f) return alert('Choose predictions CSV first');
+  const fd = new FormData(); fd.append('file', f);
+  try{
+    const res = await fetch(API + '/ingest_predictions', { method: 'POST', body: fd });
+    const j = await res.json();
+    alert('Prediction upload: ' + JSON.stringify(j));
+    log('Uploaded predictions CSV', j);
+  }catch(e){ alert('Upload failed: '+e.message); log('Pred upload failed: '+e.message); }
+}
+
+// ===== calculate stock =====
+document.getElementById('calcBtn').onclick = async ()=>{
+  const lead = parseInt(document.getElementById('leadTime').value||7);
+  const win = parseInt(document.getElementById('window').value||7);
+  try{
+    const res = await fetch(`${API}/calculate_stock?lead_time_days=${lead}&window=${win}`);
+    const j = await res.json();
+    if(j.products){ renderStock(j.products); log('Calculated stock'); } else { alert(JSON.stringify(j)); }
+  }catch(e){ alert('Calculate failed: '+e.message); log('Calculate failed: '+e.message); }
+}
+
+function renderStock(products){
+  document.getElementById('stockCard').style.display = '';
+  const tbody = document.querySelector('#stockTable tbody'); tbody.innerHTML = '';
+  Object.keys(products).forEach(pid=>{
+    const p = products[pid];
+    const imgUrl = `https://via.placeholder.com/48?text=${pid}`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><img class="prod" src="${imgUrl}" alt="${pid}"/></td>
+      <td>${pid}</td>
+      <td>${(p.last_sales_avg||0).toFixed(2)}</td>
+      <td><strong>${p.recommended_qty}</strong></td>
+      <td>
+        <button onclick="restock(${pid}, ${p.recommended_qty})">Set on-chain qty</button>
+        <button style="margin-left:6px" onclick="applyDiscount(${pid},20)">Apply 20% Discount</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ===== restock priority =====
+document.getElementById('priorityBtn').onclick = async ()=>{
+  try{
+    const res = await fetch(`${API}/restock_priority`);
+    const j = await res.json();
+    if(j.priority){ renderPriority(j.priority); log('Fetched restock priority'); }
+    else { alert(JSON.stringify(j)); }
+  }catch(e){ alert('Priority failed: '+e.message); log('Priority failed: '+e.message); }
+}
+
+function badgeForScore(score){
+  if(score >= 0.66) return '<span class="badge red">High</span>';
+  if(score >= 0.33) return '<span class="badge warn">Medium</span>';
+  return '<span class="badge ok">Low</span>';
+}
+
+function renderPriority(list){
+  document.getElementById('priorityCard').style.display = '';
+  const tbody = document.querySelector('#priorityTable tbody'); tbody.innerHTML = '';
+  list.forEach(item=>{
+    const imgUrl = `https://via.placeholder.com/48?text=${item.product_id}`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><img class="prod" src="${imgUrl}" alt="${item.product_id}"/></td>
+      <td>${item.product_id}</td>
+      <td>${item.recommended}</td>
+      <td>${item.current}</td>
+      <td>${item.need}</td>
+      <td>${(item.score||0).toFixed(2)} ${badgeForScore(item.score)}</td>
+      <td>
+        <button onclick="restock(${item.product_id}, ${Math.max(item.recommended,item.current)})">Restock to recommended</button>
+        <button style="margin-left:6px" onclick="applyDiscount(${item.product_id},15)">Apply 15% Discount</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ===== actions: applyDiscount & restock =====
+async function applyDiscount(product_id, percent){
+  try{
+    const res = await fetch(`${API}/apply_discount?product_id=${product_id}&discount_percent=${percent}`, { method: 'POST' });
+    const j = await res.json();
+    alert('Discount tx: ' + JSON.stringify(j.status || j));
+    log(`Discount applied p=${product_id} pct=${percent}`, j);
+  }catch(e){ alert('Discount failed: '+e.message); log('Discount failed: '+e.message); }
+}
+
+async function restock(product_id, new_qty){
+  try{
+    const res = await fetch(`${API}/restock_and_update_chain?product_id=${product_id}&new_qty=${new_qty}`, { method: 'POST' });
+    const j = await res.json();
+    alert('Restock tx: ' + (j.status || JSON.stringify(j)));
+    log(`Restocked p=${product_id} qty=${new_qty}`, j);
+  }catch(e){ alert('Restock failed: '+e.message); log('Restock failed: '+e.message); }
+}
+
+// On load: try to fetch initial state so users know if backend is reachable
+(async ()=>{
+  try{ const r = await fetch(API + '/calculate_stock?lead_time_days=7'); if(r.ok) log('Backend reachable'); } catch(e){ log('Backend unreachable: ' + e.message); }
+})();
+</script>
+</body>
+</html>

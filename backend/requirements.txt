@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pandas
+numpy
+web3
+python-dotenv
